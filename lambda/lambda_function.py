@@ -14,12 +14,13 @@ from ask_sdk_core.dispatch_components import AbstractRequestHandler, AbstractExc
 from ask_sdk_model.interfaces.alexa.presentation.apl import RenderDocumentDirective, ExecuteCommandsDirective, OpenUrlCommand
 from datetime import datetime, timezone, timedelta
 
-# Carrega as configurações e localizações
+# Load configurations and localization
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
 def load_config(file_name):
-    
     if str(file_name).endswith(".lang") and not os.path.exists(file_name):
         file_name = "locale/en-US.lang"
-    
     try:
         with open(file_name, encoding='utf-8') as f:
             for line in f:
@@ -27,69 +28,80 @@ def load_config(file_name):
                 if not line or '=' not in line:
                     continue
                 name, value = line.split('=', 1)
-                # Armazena diretamente nas variáveis globais
                 globals()[name] = value
     except Exception as e:
         logger.error(f"Error loading file: {str(e)}")
 
+# Initial config load
 load_config("config.cfg")
-
-# Carrega o idioma padrão, que será alterado quando obter o idioma escolhido pelo usuário quando a skill for iniciada
 load_config("locale/en-US.lang")
 
-# Configuração de log
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
-# Verificação de configuração
+# Validate HA settings
 if not globals().get("home_assistant_url") or not globals().get("home_assistant_token"):
     raise ValueError("home_assistant_url or home_assistant_token configuration are not set!")
 
-# Identificador da conversa
+# Globals for conversation
 conversation_id = None
-# Última sessão da skill
 last_interaction_date = None
-# APL Supported
 is_apl_supported = False
-# Document Token
 apl_document_token = str(uuid.uuid4())
+
+# Helper: fetch text input via webhook
+def fetch_prompt_from_ha():
+    """
+    Reads the state of your input_text helper directly via REST.
+    """
+    try:
+        entity = globals().get("assist_input_entity", "input_text.assistant_input")
+        url = f"{globals().get('home_assistant_url')}/api/states/{entity}"
+        headers = {
+            "Authorization": f"Bearer {globals().get('home_assistant_token')}",
+            "Content-Type": "application/json"
+        }
+        resp = requests.get(url, headers=headers, timeout=5)
+        if resp.status_code == 200:
+            return resp.json().get("state", "").strip()
+        else:
+            logger.error(f"HA state fetch failed: {resp.status_code} {resp.text}")
+    except Exception as e:
+        logger.error(f"Error fetching prompt from HA state: {e}")
+    return ""
+
 
 class LaunchRequestHandler(AbstractRequestHandler):
     def can_handle(self, handler_input):
         return ask_utils.is_request_type("LaunchRequest")(handler_input)
 
     def handle(self, handler_input):
-        global conversation_id, last_interaction_date, is_apl_supported, account_linking_token
-        
-        # Carrega o idioma do usuário
+        global conversation_id, last_interaction_date, is_apl_supported
+        # Load locale per user
         locale = handler_input.request_envelope.request.locale
         load_config(f"locale/{locale}.lang")
-        
-        #conversation_id = None # 'Descomente' se quiser que uma nova sessão de diálogo com a IA sempre que iniciar
 
-        # Verifica se o dispositivo tem tela (APL support), se sim, carrega a interface
+                # Check for a pre-set prompt from HA
+        prompt = fetch_prompt_from_ha()
+        # Only treat valid prompts that are not the literal "none"
+        if prompt and prompt.lower() != "none":
+            # Process this prompt as user input and keep session open for follow-up
+            response = process_conversation(prompt)
+            return handler_input.response_builder\
+                .speak(response)\
+                .ask(globals().get("alexa_speak_question"))\
+                .response
+
+        # No prompt: proceed with default welcome
         device = handler_input.request_envelope.context.system.device
         is_apl_supported = device.supported_interfaces.alexa_presentation_apl is not None
-        logger.debug("Device: " + repr(device))
-        
-        # Renderiza o documento APL com o botão para abrir o HA (se o dispositivo tiver tela)
         if is_apl_supported:
             handler_input.response_builder.add_directive(
-                RenderDocumentDirective(
-                    token=apl_document_token,
-                    document=load_template("apl_openha.json")
-                )
+                RenderDocumentDirective(token=apl_document_token, document=load_template("apl_openha.json"))
             )
-            
-        # Define o último acesso e define qual frase de boas vindas responder
         now = datetime.now(timezone(timedelta(hours=-3)))
         current_date = now.strftime('%Y-%m-%d')
         speak_output = globals().get("alexa_speak_next_message")
         if last_interaction_date != current_date:
-            # Primeira execução do dia
             speak_output = globals().get("alexa_speak_welcome_message")
-            last_interaction_date = current_date        
-
+            last_interaction_date = current_date
         return handler_input.response_builder.speak(speak_output).ask(speak_output).response
 
 class GptQueryIntentHandler(AbstractRequestHandler):
@@ -97,20 +109,14 @@ class GptQueryIntentHandler(AbstractRequestHandler):
         return ask_utils.is_intent_name("GptQueryIntent")(handler_input)
 
     def handle(self, handler_input):
-        # Captura a consulta do usuário
         query = handler_input.request_envelope.request.intent.slots["query"].value
         logger.info(f"Query received from Alexa: {query}")
-        
-        # Trata comandos/palavras chaves específicas
         response = keywords_exec(query, handler_input)
         if response:
             return response
-        
         device_id = ""
-        if bool(globals().get("home_assistant_room_recognition", "").lower() == "true"):
-            # Obter o deviceId do dispositivo que executou a skill
+        if globals().get("home_assistant_room_recognition", "").lower() == "true":
             device_id = ". device_id: " + handler_input.request_envelope.context.system.device.device_id
-        
         response = process_conversation(f"{query}{device_id}")
         logger.info(f"Response generated: {response}")
         return handler_input.response_builder.speak(response).ask(globals().get("alexa_speak_question")).response
