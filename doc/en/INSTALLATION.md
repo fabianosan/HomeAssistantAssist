@@ -1,4 +1,4 @@
-# Alexa Skill Integration with Home Assistant
+# Installation of Conversation Starter for HomeAssistantAssist
 
 > ⚠️ **Before continuing**, ensure everything is already working with the original Assist integration.
 
