@@ -11,7 +11,7 @@ Original installation instructions: https://github.com/fabianosan/HomeAssistantA
 
 ## 1. Update Lambda Function
 
-Replace the current Lambda function with the updated version provided in the `code` section of this repository (within the Alexa skill).
+Replace the entire current Lambda function with the updated version below.
 
 ```
 # -*- coding: utf-8 -*-
