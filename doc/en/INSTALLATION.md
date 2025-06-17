@@ -1,445 +1,124 @@
-# Installation of Conversation Starter for HomeAssistantAssist
 
-> ⚠️ **Before continuing**, ensure everything is already working with the original Assist integration.
+## INSTALLATION
 
-Original installation instructions here: https://github.com/fabianosan/HomeAssistantAssist/blob/main/doc/en/INSTALLATION.md
+### Setting up Home Assistant
+- Enable the Home Assistant API for your user and obtain a long-lived access token.
 
----
+### Creating the Alexa Skill
 
-## 1. Update Lambda Function
+1. Create a Skill in the [Alexa Developer Console](https://developer.amazon.com/alexa/console/ask) by following the steps below:
+   - **Name your Skill**: Choose a name of your preference (e.g., Home Assistant Assist)
+   - **Choose a primary locale**: Portuguese (BR)
+   - **Choose a type of experience**: Other
+   - **Choose a model**: Custom
+   - **Hosting services**: Alexa-hosted (Python)
+   - **Hosting region**: US East (N. Virginia) is the default, but you must use the same region where you created the AWS account and configured IAM [Instructions here](https://www.home-assistant.io/integrations/alexa.smart_home)
+   - **Templates**: Click on `Import skill`
+   - **Insert the address**: [https://github.com/fabianosan/HomeAssistantAssist.git](https://github.com/fabianosan/HomeAssistantAssist.git) and click `Import`
+2. Go to the **Code** tab.
+3. Insert your information into the configuration file as instructed below:
+   - Open the `config.cfg` file in the project's root directory (/Skill Code/lambda/).
+   - Insert the following information:
+     ```txt
+     home_assistant_url=https://YOUR-HOME-ASSISTANT-EXTERNAL-URL
+     home_assistant_token=YOUR-HOME-ASSISTANT-TOKEN
+     home_assistant_agent_id=YOUR-AGENT-ID
+     home_assistant_language=pt-BR
+     home_assistant_room_recognition=False
+     home_assistant_dashboard=YOUR-DASHBOARD-ID
+     home_assistant_kioskmode=False
+     ```
+   - **home_assistant_url**: External URL of your Home Assistant (root path).
+   - **home_assistant_token**: Long-lived access token for your Home Assistant.
+   - **(optional) home_assistant_agent_id**: Conversation agent ID configured in your Home Assistant; if not set, Assist will be used (Default).
+   - **(optional) home_assistant_language**: Language to call the Home Assistant conversation API. If not set, the agent's default language will be used.
+   - **(optional) home_assistant_room_recognition**: Enable device area recognition mode with `True`. **Attention**, it only works with AI; if you're using the default Assist, disable this option, as no command will work.
+   - **(optional) home_assistant_dashboard**: Dashboard path to display on Echo Show, e.g., `mushroom`; if not set, "lovelace" will be loaded.
+   - **(optional) home_assistant_kioskmode**: Enable kiosk mode with `True`. **Attention**, only activate this option if you have the component installed.
+4. If desired, change the default skill responses in the `/locale/en-US.lang` file or another supported language.
+5. Save the changes.
+6. Click on `Deploy`.
 
-Replace the current Lambda function with the updated version provided in the `code` section of this repository (within the Alexa skill).
+### Obtaining the `home_assistant_agent_id` from Assist or the generative AI (if you are using one):
 
-```
-# -*- coding: utf-8 -*-
-import os
-import re
-import logging
-import json
-import random
-import uuid
-import requests
-import requests.exceptions
-import ask_sdk_core.utils as ask_utils
+- Navigate to **Developer Tools**, go to the `Actions` tab, and follow the steps below: 
+1. Search for `conversation.process` in the action field and select it:
 
-from ask_sdk_core.skill_builder import SkillBuilder
-from ask_sdk_core.dispatch_components import AbstractRequestHandler, AbstractExceptionHandler
-from ask_sdk_model.interfaces.alexa.presentation.apl import RenderDocumentDirective, ExecuteCommandsDirective, OpenUrlCommand
-from datetime import datetime, timezone, timedelta
+  ![Action: Conversation: Process](images/dev_action.png)
 
-# Load configurations and localization
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+2. Enable the `Agent` field and select the desired conversation agent from the list:
 
-def load_config(file_name):
-    if str(file_name).endswith(".lang") and not os.path.exists(file_name):
-        file_name = "locale/en-US.lang"
-    try:
-        with open(file_name, encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line or '=' not in line:
-                    continue
-                name, value = line.split('=', 1)
-                globals()[name] = value
-    except Exception as e:
-        logger.error(f"Error loading file: {str(e)}")
+  ![Action: Agent](images/dev_action_uimode.png)
 
-# Initial config load
-load_config("config.cfg")
-load_config("locale/en-US.lang")
+3. Switch to `YAML MODE` and copy the ID from the `agent_id` field:
 
-# Validate HA settings
-if not globals().get("home_assistant_url") or not globals().get("home_assistant_token"):
-    raise ValueError("home_assistant_url or home_assistant_token configuration are not set!")
+  ![Action: Agent ID](images/dev_action_yaml.png)
 
-# Globals for conversation
-conversation_id = None
-last_interaction_date = None
-is_apl_supported = False
-apl_document_token = str(uuid.uuid4())
+### Obtaining the `home_assistant_token` (Long-Lived Token):
 
-# Helper: fetch text input via webhook
-def fetch_prompt_from_ha():
-    """
-    Reads the state of your input_text helper directly via REST.
-    """
-    try:
-        entity = globals().get("assist_input_entity", "input_text.assistant_input")
-        url = f"{globals().get('home_assistant_url')}/api/states/{entity}"
-        headers = {
-            "Authorization": f"Bearer {globals().get('home_assistant_token')}",
-            "Content-Type": "application/json"
-        }
-        resp = requests.get(url, headers=headers, timeout=5)
-        if resp.status_code == 200:
-            return resp.json().get("state", "").strip()
-        else:
-            logger.error(f"HA state fetch failed: {resp.status_code} {resp.text}")
-    except Exception as e:
-        logger.error(f"Error fetching prompt from HA state: {e}")
-    return ""
+- With your Home Assistant open, go to your user profile in the bottom-left corner, click on it, and then go to the `Security` tab at the top:
+  1. At the bottom of the page, click the `CREATE TOKEN` button:
+  2. Enter a name that you find appropriate, e.g., `Home Assistant Skill Assist` and click `OK`:
 
+    ![Create token](images/token.png)
 
-class LaunchRequestHandler(AbstractRequestHandler):
-    def can_handle(self, handler_input):
-        return ask_utils.is_request_type("LaunchRequest")(handler_input)
+  1. Copy the token:
 
-    def handle(self, handler_input):
-        global conversation_id, last_interaction_date, is_apl_supported
-        # Load locale per user
-        locale = handler_input.request_envelope.request.locale
-        load_config(f"locale/{locale}.lang")
+    ![Token created](images/token_created.png)
 
-                # Check for a pre-set prompt from HA
-        prompt = fetch_prompt_from_ha()
-        # Only treat valid prompts that are not the literal "none"
-        if prompt and prompt.lower() != "none":
-            # Process this prompt as user input and keep session open for follow-up
-            response = process_conversation(prompt)
-            return handler_input.response_builder\
-                .speak(response)\
-                .ask(globals().get("alexa_speak_question"))\
-                .response
+  4. Place the generated token in the configuration
 
-        # No prompt: proceed with default welcome
-        device = handler_input.request_envelope.context.system.device
-        is_apl_supported = device.supported_interfaces.alexa_presentation_apl is not None
-        if is_apl_supported:
-            handler_input.response_builder.add_directive(
-                RenderDocumentDirective(token=apl_document_token, document=load_template("apl_openha.json"))
-            )
-        now = datetime.now(timezone(timedelta(hours=-3)))
-        current_date = now.strftime('%Y-%m-%d')
-        speak_output = globals().get("alexa_speak_next_message")
-        if last_interaction_date != current_date:
-            speak_output = globals().get("alexa_speak_welcome_message")
-            last_interaction_date = current_date
-        return handler_input.response_builder.speak(speak_output).ask(speak_output).response
+### Setting the ``Invocation Name``
 
-class GptQueryIntentHandler(AbstractRequestHandler):
-    def can_handle(self, handler_input):
-        return ask_utils.is_intent_name("GptQueryIntent")(handler_input)
+- The default invocation name set in the code is "smart house."
+- To change the invocation name:
+  1. Go to the **Build** tab.
+  2. Click on `Invocations` and then on `Skill Invocation Name`.
+  3. Enter the desired new invocation name and save the changes (test if this wake word can be used in the **Test** tab).
+  4. Rebuild the model by clicking on `Build skill` if you make changes.
+  
+### Publishing the Skill
 
-    def handle(self, handler_input):
-        query = handler_input.request_envelope.request.intent.slots["query"].value
-        logger.info(f"Query received from Alexa: {query}")
-        response = keywords_exec(query, handler_input)
-        if response:
-            return response
-        device_id = ""
-        if globals().get("home_assistant_room_recognition", "").lower() == "true":
-            device_id = ". device_id: " + handler_input.request_envelope.context.system.device.device_id
-        response = process_conversation(f"{query}{device_id}")
-        logger.info(f"Response generated: {response}")
-        return handler_input.response_builder.speak(response).ask(globals().get("alexa_speak_question")).response
+1. After deploying the code in the **Code** tab, return to the **Build** tab and click on **Build skill**.
+2. Then go to the **Alexa** app on your phone: `More` > `Skills & Games` > scroll to the bottom and click on `Your Skills` > `Dev.`, click on the skill you just created and **activate** it.
 
-# Trata palavras chaves para executar comandos específicos
-def keywords_exec(query, handler_input):
-    # Se o usuário der um comando para 'abrir dashboard' ou 'abrir home assistant', abre o dashboard e interrompe a skill
-    keywords_top_open_dash = globals().get("keywords_to_open_dashboard").split(";")
-    if any(ko.strip().lower() in query.lower() for ko in keywords_top_open_dash):
-        logger.info("Opening Home Assistant dashboard")
-        open_page(handler_input)
-        return handler_input.response_builder.speak(globals().get("alexa_speak_open_dashboard")).response
+    ![Dev skills](images/alexa_dev_app.jpg)
+    ![Activate for use](images/alexa_dev_app_activated.jpg)
+3. Go back to the ``Alexa Developer Console`` and test the Skill in the **Test** tab to ensure the wake word and skill are working correctly.
+
+### Enabling room recognition (works only with AI)
+- In this mode, the skill sends the device ID (from the `Echo` device running the skill) in the Home Assistant conversation API call. Then, with a command instruction for the AI and a label associated with the device, the AI can identify the devices in the same area where your `Alexa` is located. To enable it, follow the steps below:
+
+  ***Attention!***
+  ## This mode makes commands slower and requires more complex configurations:
+  1. Change the `home_assistant_room_recognition` setting to `True`, then redeploy and perform a new `Build Model` for the skill;
+  2. Enable conversation API debug logging by adding the following configuration to Home Assistant's `configuration.yaml`:
+  - Insert the following information:
+     ```txt
+     logger:
+       logs:
+         homeassistant.components.conversation: debug
+     ```
+  3. Restart Home Assistant and start the skill from the desired Echo device. After activation, the log will show the instruction received by the skill as in the example below:
+    ```txt
+    2024-10-10 11:04:56.798 DEBUG (MainThread) [homeassistant.components.conversation.agent_manager] Processing in en-US: turn on the living room light. device_id: amzn1.ask.device.AMAXXXXXX
+     ```
+     You can also obtain the device_id from the log "device: " in the ``Alexa Developer Console`` in ``Cloud Watch`` if you know how to do it.
+  4. Take the entire identifier after the device_id, e.g., `amzn1.ask.device.AMAXXXXXX`, and add a new label to the **Echo device** using the `Alexa Media Player` Integration:
+  
+    ![Echo device label with device ID received from the skill](images/echo_device_label.png)
     
-    # Se o usuário der um comando de agradecimento o upara sair, interrompe a skill
-    keywords_close_skill = globals().get("keywords_to_close_skill").split(";")
-    if any(kc.strip().lower() in query.lower() for kc in keywords_close_skill):
-        logger.info("Closing skill from keyword command")
-        return CancelOrStopIntentHandler().handle(handler_input)
-    
-    # Se não for uma palavra-chave, continua o fluxo normalmente
-    return None
+  5. Update your preferred **AI command prompt** with the following instruction:
+     ```txt
+     If asked to perform an action and no area is specified for the device, capture the identifier contained after "device_id:" in the command, obtain the label with the same identifier, and associate the device requested in the command to the label area found.
+     ```
 
-# Chama a API do Home Assistant e trata a resposta
-def process_conversation(query):
-    global conversation_id
-    
-    home_assistant_agent_id = globals().get("home_assistant_agent_id", None)
-    home_assistant_language = globals().get("home_assistant_language", None)
-        
-    try:
-        headers = {
-            "Authorization": "Bearer {}".format(globals().get("home_assistant_token")),
-            "Content-Type": "application/json",
-        }
-        data = {
-            "text": replace_words(query)
-        }
-        # Adding optional parameters to request
-        if home_assistant_language:
-            data["language"] = home_assistant_language
-        if home_assistant_agent_id:
-            data["agent_id"] = home_assistant_agent_id
-        if conversation_id:
-            data["conversation_id"] = conversation_id
+### Good luck!
+Now you can use your Alexa skill to integrate and interact with Home Assistant via voice using Assist or open your favorite dashboard on the Echo Show.
+If you enjoyed it, remember to send a **Thank You** to the developers.
 
-        # Faz a requisição na API do Home Assistant
-        ha_api_url = "{}/api/conversation/process".format(globals().get("home_assistant_url"))
-        logger.debug(f"HA request url: {ha_api_url}")        
-        logger.debug(f"HA request data: {data}")
-        
-        response = requests.post(ha_api_url, headers=headers, json=data, timeout=7)
-        
-        logger.debug(f"HA response status: {response.status_code}")
-        logger.debug(f"HA response data: {response.text}")
-        
-        contenttype = response.headers.get('Content-Type', '')
-        logger.debug(f"Content-Type: {contenttype}")
-        
-        if (contenttype == "application/json"):
-            response_data = response.json()
-            if response.status_code == 200 and "response" in response_data:
-                conversation_id = response_data.get("conversation_id", conversation_id)
-                response_type = response_data["response"]["response_type"]
-                
-                if response_type == "action_done" or response_type == "query_answer":
-                    speech = response_data["response"]["speech"]["plain"]["speech"]
-                    # Remover "device_id:" e o que vem depois
-                    if "device_id:" in speech:
-                        speech = speech.split("device_id:")[0].strip()
-                elif response_type == "error":
-                    speech = response_data["response"]["speech"]["plain"]["speech"]
-                    logger.error(f"Error code: {response_data['response']['data']['code']}")
-                else:
-                    speech = globals().get("alexa_speak_error")
-                
-            return improve_response(speech)
-        elif (contenttype == "text/html") and int(response.status_code, 0) >= 400:
-            errorMatch = re.search(r'<title>(.*?)</title>', response.text, re.IGNORECASE)
-            
-            if errorMatch:
-                title = errorMatch.group(1)
-                logger.error(f"HTTP error {response.status_code} ({title}): Unable to connect to your Home Assistant server")
-            else:
-                logger.error(f"HTTP error {response.status_code}: Unable to connect to your Home Assistant server. \n {response.text}")
-                
-            return globals().get("alexa_speak_error")
-        elif  (contenttype == "text/plain") and int(response.status_code, 0) >= 400:
-            logger.error(f"Error processing request: {response.text}")
-            return globals().get("alexa_speak_error")
-        else:
-            logger.error(f"Error processing request: {response.text}")
-            return globals().get("alexa_speak_error")
-            
-    except requests.exceptions.Timeout as te:
-        # Tratamento para timeout
-        logger.error(f"Timeout when communicating with Home Assistant: {str(te)}", exc_info=True)
-        return globals().get("alexa_speak_timeout")
-
-    except Exception as e:
-        logger.error(f"Error processing response: {str(e)}", exc_info=True)
-        return globals().get("alexa_speak_error")
-
-# Substitui palavras geradas incorretamente pelo interpretador da Alexa na query
-def replace_words(query):
-    query = query.replace('4.º','quarto')
-    return query
-
-# Substitui palavras e caracteres especiais para falar a resposta da API
-def improve_response(speech):
-    # Função para melhorar a legibilidade da resposta
-    speech = speech.replace(':\n\n', '').replace('\n\n', '. ').replace('\n', ',').replace('-', '').replace('_', ' ')
-    
-    #replacements = str.maketrans('ïöüÏÖÜ', 'iouIOU')
-    #speech = speech.translate(replacements)
-    
-    speech = re.sub(r'[^A-Za-z0-9çÇáàâãäéèêíïóôõöúüñÁÀÂÃÄÉÈÊÍÏÓÔÕÖÚÜÑ\sß.,!?]', '', speech)
-    return speech
-
-# Carrega o template do APL da tela inicial
-def load_template(filepath):
-    # Carrega o template da interface gráfica
-    with open(filepath, encoding='utf-8') as f:
-        template = json.load(f)
-
-    if filepath == 'apl_openha.json':
-        # Localiza os textos dinâmicos do APL 
-        template['mainTemplate']['items'][0]['items'][2]['text'] = globals().get("echo_screen_welcome_text")
-        template['mainTemplate']['items'][0]['items'][3]['text'] = globals().get("echo_screen_click_text")
-        template['mainTemplate']['items'][0]['items'][4]['onPress']['source'] = get_hadash_url()
-        template['mainTemplate']['items'][0]['items'][4]['item']['text'] = globals().get("echo_screen_button_text")
-
-    return template
-
-# Abre dashboard do Home Assistant no navegador Silk
-def open_page(handler_input):
-    if is_apl_supported:
-        # Renderizar modelo vazio, necessário para o comando OpenURL
-        # https://amazon.developer.forums.answerhub.com/questions/220506/alexa-open-a-browser.html
-        
-        handler_input.response_builder.add_directive(
-            RenderDocumentDirective(
-                token=apl_document_token,
-                document=load_template("apl_empty.json")
-            )
-        )
-        
-        # Open default page of dashboard
-        handler_input.response_builder.add_directive(
-            ExecuteCommandsDirective(
-                token=apl_document_token,
-                commands=[OpenUrlCommand(source=get_hadash_url())]
-            )
-        )
-
-# Monta a URL do dashboard do Home Assistant
-def get_hadash_url():
-    ha_dashboard_url = globals().get("home_assistant_url")
-    ha_dashboard_url += "/{}".format(globals().get("home_assistant_dashboard", "lovelace"))
-    
-    # Adicionando o modo kioskmode, se estiver ativado
-    home_assistant_kioskmode = bool(globals().get("home_assistant_kioskmode", False))
-    if home_assistant_kioskmode:
-        ha_dashboard_url += '?kiosk'
-    
-    logger.debug(f"ha_dashboard_url: {ha_dashboard_url}")
-    return ha_dashboard_url
-
-class HelpIntentHandler(AbstractRequestHandler):
-    def can_handle(self, handler_input):
-        return ask_utils.is_intent_name("AMAZON.HelpIntent")(handler_input)
-
-    def handle(self, handler_input):
-        speak_output = globals().get("alexa_speak_help")
-        return handler_input.response_builder.speak(speak_output).ask(speak_output).response
-
-class CancelOrStopIntentHandler(AbstractRequestHandler):
-    def can_handle(self, handler_input):
-        return ask_utils.is_intent_name("AMAZON.CancelIntent")(handler_input) or ask_utils.is_intent_name("AMAZON.StopIntent")(handler_input)
-
-    def handle(self, handler_input):
-        speak_output = random.choice(globals().get("alexa_speak_exit").split(";"))
-        return handler_input.response_builder.speak(speak_output).set_should_end_session(True).response
-
-class SessionEndedRequestHandler(AbstractRequestHandler):
-    def can_handle(self, handler_input):
-        return ask_utils.is_request_type("SessionEndedRequest")(handler_input)
-
-    def handle(self, handler_input):
-        return handler_input.response_builder.response
-
-class CatchAllExceptionHandler(AbstractExceptionHandler):
-    def can_handle(self, handler_input, exception):
-        return True
-
-    def handle(self, handler_input, exception):
-        logger.error(exception, exc_info=True)
-        speak_output = globals().get("alexa_speak_error")
-        return handler_input.response_builder.speak(speak_output).ask(speak_output).response
-
-sb = SkillBuilder()
-sb.add_request_handler(LaunchRequestHandler())
-sb.add_request_handler(GptQueryIntentHandler())
-sb.add_request_handler(HelpIntentHandler())
-sb.add_request_handler(CancelOrStopIntentHandler())
-sb.add_request_handler(SessionEndedRequestHandler())
-sb.add_exception_handler(CatchAllExceptionHandler())
-
-lambda_handler = sb.lambda_handler()
-```
----
-You will then need to save and deploy the code. Once it has deployed head over to the build tab and click 'Build Skill'
-## 2. Update `config.cfg`
-
-Add the following line to your `config.cfg` file:
-
-```
-assist_input_entity = input_text.assistant_input
-```
-
----
-
-## 3. Create a Text Helper in Home Assistant
-
-1. Open Home Assistant.
-2. Go to:  
-   **Settings → Devices & Services → Helpers**
-3. Click **Create Helper** → Choose **Text**.
-4. Set the following options:
-   - **Name:** `assistant_input`
-   - **Maximum number of characters:** `255` (this is the hard limit)
-5. Click **Create**.
-
-> ⚠️ Note: 255 characters is a hard limitation for prompt size. There's no reliable workaround yet, except embedding other text inputs into the prompt.
-
----
-
-## 4. Create a Script in Home Assistant
-
-### Step-by-step Instructions:
-
-1. Go to the [Alexa Developer Console](https://developer.amazon.com/alexa/console/ask).
-2. On your skill’s home page, click **Copy Skill ID**.
-3. In Home Assistant, navigate to **Settings → Automations & Scenes → Scripts**.
-4. Click **Add Script** and enter a name like `Prompt Alexa Device`.
-5. Click the three-dot menu (⋮) and switch to **YAML mode**.
-6. Paste the following YAML into the editor.  
-   Replace the placeholders:
-
-   - `*your Skill ID*` → your actual Alexa skill ID  
-   - `*the alexa you want to target*` → the `media_player` entity ID of your Alexa device
-
-```
-sequence:
-  - action: input_text.set_value
-    metadata: {}
-    data:
-      value: "{{prompt}}"
-    target:
-      entity_id: input_text.assistant_input
-  - action: media_player.play_media
-    data:
-      media_content_id: *your Skill ID*
-      media_content_type: skill
-    target:
-      entity_id: *the alexa you want to target*
-  - delay:
-      hours: 0
-      minutes: 0
-      seconds: 10
-      milliseconds: 0
-  - action: input_text.set_value
-    metadata: {}
-    data:
-      value: none
-    target:
-      entity_id: input_text.assistant_input 
-alias: prompt on Alexa device
-description: ""
-fields:
-  prompt:
-    selector:
-      text: null
-    name: prompt
-    description: >-
-      The prompt to pass to the skill, used as the first message to start a conversation.
-    required: true
-```
-
-7. Click **Save**.
-
----
-
-## 5. Call the Script from an Automation
-
-Now that the script is set up, you can trigger it from an automation. This will:
-
-- Pass a prompt to your Alexa skill
-- Begin a spoken conversation using the assistant's response
-
-### Example Automation Action
-
-```
-action: script.prompt_alexa_device
-metadata: {}
-data:
-  prompt: >-
-    I am cooking in the kitchen, can you offer to play some music,
-    suggest a genre based on the time of day and day of the week.
-```
-
-> ⚠️ **Important:** Prompts must be **fewer than 255 characters**, or the call will fail.
-
----
+<details><summary>Special thanks</summary>
+<p>   
+To [rodrigoscoelho](https://github.com/rodrigoscoelho), who started the development of this skill.
+</p>
+</details>
