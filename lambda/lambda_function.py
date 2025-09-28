@@ -157,7 +157,7 @@ class GptQueryIntentHandler(AbstractRequestHandler):
 
         # Include device ID if needed
         device_id = ""
-        if home_assistant_room_recognition == True
+        if home_assistant_room_recognition == True:
             device_id = f". device_id: {context.system.device.device_id}"
 
         full_query = query + device_id
