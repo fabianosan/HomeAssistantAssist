@@ -175,39 +175,18 @@ class GptQueryIntentHandler(AbstractRequestHandler):
 
 # Handles keywords to execute specific commands
 def keywords_exec(query, handler_input):
-    # Check if the previous response was one of those that allow closing with a keyword
-    last_speak_output = handler_input.attributes_manager.session_attributes.get("last_speak_output", "")
-
-    q = (query or "").strip()
-
     # Commands to open the dashboard
-    keywords_top_open_dash = [k.strip() for k in globals().get("keywords_to_open_dashboard", "").split(";") if k.strip()]
-    for ko in keywords_top_open_dash:
-        if re.search(r'(?<!\w)' + re.escape(ko) + r'(?!\w)', q, flags=re.IGNORECASE):
-            logger.info("Opening Home Assistant dashboard")
-            open_page(handler_input)
-            return handler_input.response_builder.speak(globals().get("alexa_speak_open_dashboard")).response
+    keywords_top_open_dash = globals().get("keywords_to_open_dashboard").split(";")
+    if any(ko.strip().lower() in query.lower() for ko in keywords_top_open_dash):
+        logger.info("Opening Home Assistant dashboard")
+        open_page(handler_input)
+        return handler_input.response_builder.speak(globals().get("alexa_speak_open_dashboard")).response
 
-    # Commands to close the skill — are only valid if the last response was one of the allowed ones
-    keywords_close_skill = [k.strip() for k in globals().get("keywords_to_close_skill", "").split(";") if k.strip()]
-    allowed_closing_contexts = [
-        globals().get("alexa_speak_welcome_message"),
-        globals().get("alexa_speak_next_message"),
-        globals().get("alexa_speak_question"),
-        globals().get("alexa_speak_help"),
-    ]
-
-    # Count words in user query (Unicode aware)
-    tokens = re.findall(r"\w+", q, flags=re.UNICODE)
-    word_count = len(tokens)
-
-    # Only close if a whole-word keyword is present AND the last response allows closing
-    # AND the user utterance is short (e.g. "não", "não, obrigado") to avoid matching negatives inside full questions.
-    MAX_WORDS_TO_CLOSE = 3
-    if (any(re.search(r'(?<!\w)' + re.escape(kc) + r'(?!\w)', q, flags=re.IGNORECASE) for kc in keywords_close_skill)
-            and last_speak_output in allowed_closing_contexts
-            and word_count <= MAX_WORDS_TO_CLOSE):
-        logger.info("Closing skill from keyword command (context verified)")
+    # Commands to close the skill — only if query has 3 or fewer words and matches closing keywords exactly
+    keywords_close_skill = globals().get("keywords_to_close_skill").split(";")
+    query_words = query.lower().split()
+    if len(query_words) <= 3 and any(kc.strip().lower() in query.lower() for kc in keywords_close_skill):
+        logger.info("Closing skill from keyword command")
         return CancelOrStopIntentHandler().handle(handler_input)
 
     # If it is not a keyword or the context does not allow closing
