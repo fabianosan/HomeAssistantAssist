@@ -185,7 +185,7 @@ def keywords_exec(query, handler_input):
     # Commands to close the skill — only if query has 3 or fewer words and matches closing keywords exactly
     keywords_close_skill = globals().get("keywords_to_close_skill").split(";")
     query_words = query.lower().split()
-    if len(query_words) <= 3 and any(kc.strip().lower() in query.lower() for kc in keywords_close_skill):
+    if len(query_words) <= 3 and any(kc.strip().lower() in query_words for kc in keywords_close_skill):
         logger.info("Closing skill from keyword command")
         return CancelOrStopIntentHandler().handle(handler_input)
 
