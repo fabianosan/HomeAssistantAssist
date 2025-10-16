@@ -183,11 +183,14 @@ def keywords_exec(query, handler_input):
         return handler_input.response_builder.speak(globals().get("alexa_speak_open_dashboard")).response
 
     # Commands to close the skill — only if query has 3 or fewer words and matches closing keywords exactly
-    keywords_close_skill = globals().get("keywords_to_close_skill").split(";")
+    keywords_close_skill = [k.strip().lower() for k in globals().get("keywords_to_close_skill").split(";")]
     query_words = query.lower().split()
-    if len(query_words) <= 3 and any(kc.strip().lower() in query.lower() for kc in keywords_close_skill):
-        logger.info("Closing skill from keyword command")
-        return CancelOrStopIntentHandler().handle(handler_input)
+    if len(query_words) <= 3:
+        for kc in keywords_close_skill:
+            # Match whole word or phrase using word boundaries to avoid substrings
+            if re.search(r'\b' + re.escape(kc) + r'\b', query.lower()):
+                logger.info("Closing skill from keyword command")
+                return CancelOrStopIntentHandler().handle(handler_input)
 
     # If it is not a keyword or the context does not allow closing
     return None
